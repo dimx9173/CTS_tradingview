@@ -1,0 +1,30 @@
+[account.sub.1]
+name = TradingVeiw1
+api_key = XXXX
+secret = YYYY
+
+[account.sub.2]
+name = TradingVeiw2
+api_key = XXXX
+secret = YYYY
+
+[account.sub.3]
+name = TradingVeiw3
+api_key = XXXX
+secret = YYYY
+
+[account.sub.4]
+name = TradingVeiw4
+api_key = XXXX
+secret = YYYY
+
+
+[trading]
+single_reset=True
+
+[service]
+api_sec = tradingbybit
+listen_host = 0.0.0.0
+listen_port = 8080
+debug_mode = True
+ip_white_list = 127.0.0.1

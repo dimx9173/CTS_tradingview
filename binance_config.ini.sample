@@ -1,0 +1,25 @@
+[account]
+name = "TradingVeiw"
+api_key = XXXX
+secret = YYYY
+password = 123456789
+enable_proxies = False
+proxies = http://127.0.0.1:10800
+
+[trading]
+symbol = BTC-USDT-SWAP
+amount = 1
+price = 69999
+td_mode = isolated
+lever = 1
+enable_stop_loss = False
+enable_stop_gain = False
+signal_reset = True
+min_price_point={ "BTCUSDT": 0.1, "ETHUSDT":0.01 }
+
+[service]
+api_sec = tradingbinance
+listen_host = 0.0.0.0
+listen_Port = 8080
+debug_mode = False
+ip_white_list = 127.0.0.1
