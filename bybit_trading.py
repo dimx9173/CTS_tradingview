@@ -50,6 +50,7 @@ class TradingAgent(object):
 
     # close all position
     def closeAllPosition(self, _symbol):
+        logging.info("closeAllPosition: symbol:{symbol}".format(symbol=_symbol))
         try:
             # get a list of all open positions
             positions = self.exchange.fetch_positions(symbols=[_symbol])
@@ -98,6 +99,7 @@ class TradingAgent(object):
     
     # cancel last order
     def cancelLastOrder(self, _symbol):
+        logging.info("cancelLastOrder: symbol:{symbol}".format(symbol=_symbol))
         try:
             res = self.exchange.cancel_all_orders(symbol=_symbol,params={})
             logging.info("cancelLastOrder res: " + json.dumps(res))
@@ -109,6 +111,7 @@ class TradingAgent(object):
     # Get instruments
     def initInstruments(self):
         c = 0
+        logging.info("initInstruments, accountName:{accountName}".format(accountName=self.accountConfig.get('name')))
         #logging.info(exchange.load_markets(params={"symbol":"BTCUSDT"}))
         try:
             # 获取永续合约基础信息
@@ -133,10 +136,12 @@ class TradingAgent(object):
         return c >= 2
 
     def order(self, request):
+        logging.info("order, accountName:{accountName}".format(accountName=self.accountConfig.get('name')))
         ret = {
-            "cancelLastOrder": False,
-            "closedPosition": False,
-            "createOrderRes": False,
+            "accountName":self.accountConfig.get('name'),
+            "cancelLastOrder":None,
+            "closedPosition": None,
+            "createOrderRes": None,
             "msg": ""
         }
         #logging.info("fetch_orders={orderlist}".format(orderlist=exchange.fetch_orders(symbol="ETH-PERP", limit=200)))
@@ -162,13 +167,14 @@ class TradingAgent(object):
 
         # cancel last order
         ret["cancelLastOrder"] = self.cancelLastOrder(_params['symbol'])
-        if config.get('trading', 'single_reset') == 'true':
+        if config.getboolean('trading', 'single_reset'):
+            logging.info("single_reset")
             # close all position if last position is different from current position
             if self.lastOrdSide != _params['side'] or self.lastOrdPosition != _params['position']:
                 ret["closedPosition"] = self.closeAllPosition(_params['symbol'])
 
         # close all position if position is flat
-        if _params['position'] == 'flat':
+        if _params['position'] == 'flat' and ret["closedPosition"] is None:
             ret["closedPosition"] = self.closeAllPosition(_params['symbol'])
             self.lastOrdType = _params['ordType']
             self.lastOrdSide = _params['side']
@@ -200,15 +206,16 @@ def before_req():
 
 
 @app.route('/order/bybit/sub<int:sub_num>', methods=['POST'])
-def order_handler(sub_num: int) -> dict:
-    sub_num = sub_num - 1
-    ret = {}  # or any other processing specific to the routes
-    if tradingAgents[sub_num] is None:
+def order_handler(url_num: int) -> dict:
+    logging.info("order_handler url_num:{url_num}".format(url_num=url_num))
+    sub_num = url_num - 1
+    ret = {}# or any other processing specific to the routes
+    agent = tradingAgents[sub_num]
+    if agent is None:
         ret['msg'] = "Unknown trading agent"
-    logging.info("order_handler sub_num:{sub_num}".format(sub_num=sub_num))
-    logging.info("tradingAgents[sub_num]:{sub_num}, accountConfig:{accountConfig}"
-                 .format(sub_num=sub_num, accountConfig=tradingAgents[sub_num].accountConfig))
-    ret = tradingAgents[sub_num].order(request)
+    logging.info("tradingAgents[{sub_num}]:{url_num}, accountName:{accountName}"
+                 .format(sub_num=sub_num,url_num=url_num, accountName=agent.accountConfig.get('name')))
+    ret = agent.order(request)
     return ret
 
 if __name__ == '__main__':
