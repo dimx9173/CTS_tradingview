@@ -20,11 +20,11 @@ secret = YYYY
 
 
 [trading]
-single_reset=True
+single_reset=true
 
 [service]
 api_sec = tradingbybit
 listen_host = 0.0.0.0
 listen_port = 8080
-debug_mode = True
+debug_mode = true
 ip_white_list = 127.0.0.1
