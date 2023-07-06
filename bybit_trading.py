@@ -8,6 +8,7 @@ from flask import request, abort
 import json
 import urllib.request
 import os
+import requests
 
 
 if os.path.exists('./bybit_config.ini'):
@@ -50,12 +51,12 @@ class TradingAgent(object):
 
     # close all position
     def closeAllPosition(self, _symbol):
-        logging.info("closeAllPosition: symbol:{symbol}".format(symbol=_symbol))
+        logging.info("[closeAllPosition] symbol:{symbol}".format(symbol=_symbol))
         try:
             # get a list of all open positions
             positions = self.exchange.fetch_positions(symbols=[_symbol])
-            logging.info("positions: " + str(positions))
-            res = "closeAllPosition res: done"
+            logging.info("[closeAllPosition] positions: " + str(positions))
+            res = "res: done"
             if positions[0]['contracts'] > 0.0 :
                 if positions[0]['side'] == "long":
                     _side = "sell"
@@ -63,19 +64,20 @@ class TradingAgent(object):
                     _side = "buy"
                 res = self.createOrder(_symbol=_symbol, _amount=positions[0]['contracts'], _side=_side)
             
-            logging.info("closeAllPosition res: " + json.dumps(res))
+            logging.info("[closeAllPosition] res: " + json.dumps(res))
 
             return True
         except Exception as e:
-            logging.error("closeAllPosition err: " + str(e))
+            logging.error("[closeAllPosition] err: " + str(e))
             return False
 
     # create order
-    def createOrder(self, _symbol, _amount, _side, _price=None, _ordType=None):
+    def createOrder(self, _symbol, _amount, _side, _price=None, _ordType='market'):
         try:
-            logging.info("createOrder:symbol:{symbol},side:{side},amount:{amount},price:{price},ordType:{ordType}"
+            logging.info("[createOrder] symbol:{symbol},side:{side},amount:{amount},price:{price},ordType:{ordType}"
                          .format(symbol=_symbol, side=_side, amount=_amount
                              ,price=_price, ordType=_ordType))
+            
             res = None
             if _ordType == 'limit': #limit
                 #check price is valid
@@ -87,31 +89,31 @@ class TradingAgent(object):
             elif _ordType == 'market-limit' : #market-limit
                 return False, "market-limit not support yet"
             
-            logging.info("createOrder res:{res}".format(res=res))
+            logging.info("[createOrder] res:{res}".format(res=res))
             global lastOrdId,config
             if res:
                 lastOrdId = res['id']
                 return True, "create order successfully,lastOrdId:{lastOrdId}".format(lastOrdId=lastOrdId)
             return False, "create order failed"
         except Exception as e:
-            logging.error("createOrder " + str(e))
+            logging.error("[createOrder] err:" + str(e))
             return False, str(e)
     
     # cancel last order
     def cancelLastOrder(self, _symbol):
-        logging.info("cancelLastOrder: symbol:{symbol}".format(symbol=_symbol))
+        logging.info("[cancelLastOrder] symbol:{symbol}".format(symbol=_symbol))
         try:
             res = self.exchange.cancel_all_orders(symbol=_symbol,params={})
-            logging.info("cancelLastOrder res: " + json.dumps(res))
+            logging.info("[cancelLastOrder] res: " + json.dumps(res))
             return True
         except Exception as e:
-            logging.error("cancelLastOrder err: " + str(e))
+            logging.error("[cancelLastOrder] err: " + str(e))
             return False
 
     # Get instruments
     def initInstruments(self):
         c = 0
-        logging.info("initInstruments, accountName:{accountName}".format(accountName=self.accountConfig.get('name')))
+        logging.info("[initInstruments] accountName:{accountName}".format(accountName=self.accountConfig.get('name')))
         #logging.info(exchange.load_markets(params={"symbol":"BTCUSDT"}))
         try:
             # 获取永续合约基础信息
@@ -136,7 +138,7 @@ class TradingAgent(object):
         return c >= 2
 
     def order(self, request):
-        logging.info("order, accountName:{accountName}".format(accountName=self.accountConfig.get('name')))
+        logging.info("[order] accountName:{accountName}".format(accountName=self.accountConfig.get('name')))
         ret = {
             "accountName":self.accountConfig.get('name'),
             "cancelLastOrder":None,
@@ -168,7 +170,7 @@ class TradingAgent(object):
         # cancel last order
         ret["cancelLastOrder"] = self.cancelLastOrder(_params['symbol'])
         if config.getboolean('trading', 'single_reset'):
-            logging.info("single_reset")
+            logging.info("[single_reset]")
             # close all position if last position is different from current position
             if self.lastOrdSide != _params['side'] or self.lastOrdPosition != _params['position']:
                 ret["closedPosition"] = self.closeAllPosition(_params['symbol'])
@@ -194,6 +196,8 @@ class TradingAgent(object):
 
 app = Flask(__name__)
 
+
+
 @app.before_request
 def before_req():
     if request.json is None:
@@ -205,7 +209,7 @@ def before_req():
 
 
 
-@app.route('/order/bybit/sub<int:sub_num>', methods=['POST'])
+@app.route('/order/bybit/sub<int:url_num>', methods=['POST'])
 def order_handler(url_num: int) -> dict:
     logging.info("order_handler url_num:{url_num}".format(url_num=url_num))
     sub_num = url_num - 1
@@ -213,8 +217,9 @@ def order_handler(url_num: int) -> dict:
     agent = tradingAgents[sub_num]
     if agent is None:
         ret['msg'] = "Unknown trading agent"
-    logging.info("tradingAgents[{sub_num}]:{url_num}, accountName:{accountName}"
-                 .format(sub_num=sub_num,url_num=url_num, accountName=agent.accountConfig.get('name')))
+    msg = "tradingAgents[{sub_num}]:{url_num}, accountName:{accountName}, request:{request}"
+    msg = msg.format(sub_num=sub_num,url_num=url_num, accountName=agent.accountConfig.get('name'), request=request.json)
+    logging.info(msg)
     ret = agent.order(request)
     return ret
 
@@ -262,3 +267,6 @@ if __name__ == '__main__':
     except Exception as e:
         logging.error(e)
         pass
+
+
+
