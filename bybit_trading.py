@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 import configparser
+from re import M
 import ccxt
 import logging
 from flask import Flask
@@ -9,7 +10,7 @@ import json
 import urllib.request
 import os
 import requests
-
+import core.MessageSender as MessageSender
 
 if os.path.exists('./bybit_config.ini'):
     config = configparser.ConfigParser()
@@ -18,11 +19,6 @@ else:
     logging.info("config.ini not found, program will exit")
     exit()
 tradingAgents = []
-LOG_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
-DATE_FORMAT = "%Y/%m/%d/ %H:%M:%S %p"
-logging.basicConfig(filename='bybit_trade.log', level=logging.INFO, format=LOG_FORMAT, datefmt=DATE_FORMAT)
-logging.getLogger().addHandler(logging.StreamHandler())
-
 
 class TradingAgent(object):
     def __init__(self, config, accountConfig):
@@ -193,6 +189,17 @@ class TradingAgent(object):
             self.lastOrdPosition = _params['position']
         return ret
 
+def sendMessage(msg):
+    messageSender = None
+    try:
+        messageSender = MessageSender.MessageSender(configPath='./core/MessageSender.cfg')
+        messageSender.sendMessageToMq(msg)
+    except Exception as e:
+        logging.error("sendMessage err:" + str(e))
+    finally:
+        if messageSender is not None:
+           messageSender.Stop()
+
 
 app = Flask(__name__)
 
@@ -220,10 +227,15 @@ def order_handler(url_num: int) -> dict:
     msg = "tradingAgents[{sub_num}]:{url_num}, accountName:{accountName}, request:{request}"
     msg = msg.format(sub_num=sub_num,url_num=url_num, accountName=agent.accountConfig.get('name'), request=request.json)
     logging.info(msg)
+    sendMessage(msg)
     ret = agent.order(request)
     return ret
 
 if __name__ == '__main__':
+    LOG_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
+    DATE_FORMAT = "%Y/%m/%d/ %H:%M:%S %p"
+    logging.basicConfig(filename='bybit_trade.log', level=logging.INFO, format=LOG_FORMAT, datefmt=DATE_FORMAT)
+    logging.getLogger().addHandler(logging.StreamHandler())
     try:
         ip = json.load(urllib.request.urlopen('http://httpbin.org/ip'))['origin']
         logging.info("[bybit] trading agent started\n")
@@ -259,6 +271,7 @@ if __name__ == '__main__':
 
         if len(tradingAgents) <= 0:
             raise Exception("No trading agents")
+       
 
         # service started
         app.run(debug=config.getboolean('service','debug_mode')
@@ -266,6 +279,8 @@ if __name__ == '__main__':
                 , host=config.get('service','listen_host'))
     except Exception as e:
         logging.error(e)
+        pass
+    finally:
         pass
 
 
