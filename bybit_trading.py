@@ -133,36 +133,11 @@ class TradingAgent(object):
             logging.error("fetch_markets FUTURES " + str(e))
         return c >= 2
 
-    def order(self, request):
-        logging.info("[order] accountName:{accountName}".format(accountName=self.accountConfig.get('name')))
-        ret = {
-            "accountName":self.accountConfig.get('name'),
-            "cancelLastOrder":None,
-            "closedPosition": None,
-            "createOrderRes": None,
-            "msg": ""
-        }
-        #logging.info("fetch_orders={orderlist}".format(orderlist=exchange.fetch_orders(symbol="ETH-PERP", limit=200)))
-        # Get parameters or fill default parameters
-        _params = request.json
-        if "apiSec" not in _params or _params["apiSec"] != self.apiSec:
-            ret['msg'] = "Permission Denied."
-            return ret
-        if "symbol" not in _params:
-            ret['msg'] = "Please specify symbol parameter."
-            return ret
-        if "amount" not in _params:
-            ret['msg'] = "Please specify amount parameter."
-            return ret
-        if "side" not in _params:
-            ret['msg'] = "Please specify side parameter"
-            return ret
-
+    def runOrder(self, ret, _params):
         #Note: When opening an order, the original position will be closed first, and then your long order will be placed
         #self.lastOrdType = None #limit/market/market-limit
         #self.lastOrdSide = None #buy/sell
         #self.lastOrdPosition = None #long/short/flat
-
         # cancel last order
         ret["cancelLastOrder"] = self.cancelLastOrder(_params['symbol'])
         if config.getboolean('trading', 'single_reset'):
@@ -189,6 +164,76 @@ class TradingAgent(object):
             self.lastOrdPosition = _params['position']
         return ret
 
+    def orderCommon(self, request):
+        logging.info("[order] accountName:{accountName}".format(accountName=self.accountConfig.get('name')))
+        ret = {
+            "accountName":self.accountConfig.get('name'),
+            "cancelLastOrder":None,
+            "closedPosition": None,
+            "createOrderRes": None,
+            "msg": ""
+        }
+        #logging.info("fetch_orders={orderlist}".format(orderlist=exchange.fetch_orders(symbol="ETH-PERP", limit=200)))
+        # Get parameters or fill default parameters
+        _params = request.json
+        if "apiSec" not in _params or _params["apiSec"] != self.apiSec:
+            ret['msg'] = "Permission Denied."
+            return ret
+        if "symbol" not in _params:
+            ret['msg'] = "Please specify symbol parameter."
+            return ret
+        if "amount" not in _params:
+            ret['msg'] = "Please specify amount parameter."
+            return ret
+        if "side" not in _params:
+            ret['msg'] = "Please specify side parameter"
+            return ret
+
+
+        return self.runOrder(ret, _params)
+    
+    def orderLeftTurn(self, request):
+        '''
+        左側拐點｜多方平倉｜45m｜$1606.11
+        左側拐點｜多方進場｜45m｜$1587.74
+        左側拐點｜多方止損｜45m｜$1517.74
+        '''
+        payload = request.get_data().decode('utf-8').split('｜')
+
+        if len(payload) != 0 and '左側拐點' not in payload:
+            logging.info("[orderLeftTurn] not a left turn case ,payload:{payload}".format(payload=payload))
+            return
+        logging.info("[orderLeftTurn] accountName:{accountName}, payload:{payload}".
+                     format(accountName=self.accountConfig.get('name'), payload=payload))
+
+        ret = {
+            "case" : "左側拐點",
+            "accountName":self.accountConfig.get('name'),
+            "cancelLastOrder":None,
+            "closedPosition": None,
+            "createOrderRes": None,
+            "msg": ""
+        }
+        _params = {}
+        _params["ordType"] = "market"
+        _params["symbol"] = self.accountConfig.get('default_symbol')
+        _params["amount"] = self.accountConfig.get('default_amount')
+
+        if "多方進場" in payload:    
+            _params["position"] = "long"
+            _params["side"] = "buy"
+        elif "多方止損" in payload:
+            _params["position"] = "flat"
+            _params["side"] = "sell"
+        elif "多方平倉" in payload:
+            _params["position"] = "flat"
+            _params["side"] = "sell"
+        
+        return self.runOrder(ret, _params)
+
+
+        
+
 def sendMessage(msg):
     messageSender = None
     try:
@@ -207,12 +252,30 @@ app = Flask(__name__)
 
 @app.before_request
 def before_req():
-    if request.json is None:
-        abort(400)
+    logging.info("request_header:{request_header}".format(request_header = request.headers))
+    logging.info("request_data:{request_data}".format(request_data = request.get_data().decode('utf-8')))
+
     if request.remote_addr not in config.get("service", "ip_white_list").split(","):
         abort(403)
-    if "apiSec" not in request.json or request.json["apiSec"] != config.get("service", "api_sec"):
+    
+    try:
+        req_json = request.get_json()
+    except Exception as e:
+        logging.info("not a json request")
+        req_json = None
+
+
+    if req_json is not None and (
+            "apiSec" not in req_json or req_json["apiSec"] != config.get("service", "api_sec")):
         abort(401)
+    elif request.get_data() is not None:
+        specific_keys = config.get("service", "specific_keys").split(",")
+        for key in specific_keys:
+            if key in request.get_data().decode('utf-8'):
+                return
+        abort(400)
+    else:
+        abort(400)
 
 
 
@@ -223,12 +286,17 @@ def order_handler(url_num: int) -> dict:
     ret = {}# or any other processing specific to the routes
     agent = tradingAgents[sub_num]
     if agent is None:
-        ret['msg'] = "Unknown trading agent"
+        ret['msg'] = "Unknown trading agent "
     msg = "tradingAgents[{sub_num}]:{url_num}, accountName:{accountName}, request:{request}"
-    msg = msg.format(sub_num=sub_num,url_num=url_num, accountName=agent.accountConfig.get('name'), request=request.json)
+    msg = msg.format(sub_num=sub_num,url_num=url_num,
+                     accountName=agent.accountConfig.get('name'),
+                     request=request.get_data().decode('utf-8'))
     logging.info(msg)
     sendMessage(msg)
-    ret = agent.order(request)
+    if '左側拐點' in request.get_data().decode('utf-8'):
+        ret = agent.orderLeftTurn(request)
+    else:
+        ret = agent.orderCommon(request)
     return ret
 
 if __name__ == '__main__':
