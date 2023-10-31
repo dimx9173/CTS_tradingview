@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 import configparser
-from re import M
+from re import M, T
 import ccxt
 import logging
 from flask import Flask
@@ -134,34 +134,43 @@ class TradingAgent(object):
         return c >= 2
 
     def runOrder(self, ret, _params):
+        logging.info("[runOrder] ret:{ret} , _params:{_params}".format(ret=ret, _params=_params))
         #Note: When opening an order, the original position will be closed first, and then your long order will be placed
         #self.lastOrdType = None #limit/market/market-limit
         #self.lastOrdSide = None #buy/sell
         #self.lastOrdPosition = None #long/short/flat
-        # cancel last order
-        ret["cancelLastOrder"] = self.cancelLastOrder(_params['symbol'])
-        if config.getboolean('trading', 'single_reset'):
-            logging.info("[single_reset]")
-            # close all position if last position is different from current position
-            if self.lastOrdSide != _params['side'] or self.lastOrdPosition != _params['position']:
-                ret["closedPosition"] = self.closeAllPosition(_params['symbol'])
+        try:
+            # cancel last order
+            ret["cancelLastOrder"] = self.cancelLastOrder(_params['symbol'])
+            logging.info("[runOrder] cancelLastOrder res:{res}".format(res=ret))
 
-        # close all position if position is flat
-        if _params['position'] == 'flat' and ret["closedPosition"] is None:
-            ret["closedPosition"] = self.closeAllPosition(_params['symbol'])
-            self.lastOrdType = _params['ordType']
-            self.lastOrdSide = _params['side']
-            self.lastOrdPosition = _params['position']
-        elif _params['amount'] < 0.001:
-            ret['msg'] = 'Amount is too small. Please increase amount.'
-        else:
-            # create new order
-            ret["createOrderRes"], ret['msg'] = self.createOrder(_symbol=_params['symbol'], _amount=_params['amount'],
-                                                            _price=_params['price'], _side=_params['side'],
-                                                _ordType=_params['ordType'])
-            self.lastOrdType = _params['ordType']
-            self.lastOrdSide = _params['side']
-            self.lastOrdPosition = _params['position']
+            if config.getboolean('trading', 'single_reset'):
+                logging.info("[single_reset]")
+                # close all position if last position is different from current position
+                if self.lastOrdSide != _params['side'] or self.lastOrdPosition != _params['position']:
+                    ret["closedPosition"] = self.closeAllPosition(_params['symbol'])
+                    logging.info("[runOrder] single_reset closedPosition res:{res}".format(res=ret))
+
+            # close all position if position is flat
+            if _params['position'] == 'flat' and ret["closedPosition"] is None:
+                ret["closedPosition"] = self.closeAllPosition(_params['symbol'])
+                self.lastOrdType = _params['ordType']
+                self.lastOrdSide = _params['side']
+                self.lastOrdPosition = _params['position']
+                logging.info("[runOrder] closedPosition res:{res}".format(res=ret))
+            elif _params['amount'] < 0.001:
+                ret['msg'] = 'Amount is too small. Please increase amount.'
+            else:
+                # create new order
+                ret["createOrderRes"], ret['msg'] = self.createOrder(_symbol=_params['symbol'], _amount=_params['amount'],
+                                                                _price=_params['price'], _side=_params['side'],
+                                                    _ordType=_params['ordType'])
+                self.lastOrdType = _params['ordType']
+                self.lastOrdSide = _params['side']
+                self.lastOrdPosition = _params['position']
+                logging.info("[runOrder] createOrderRes res:{res}".format(res=ret))
+        except Exception as e:
+            logging.error("[runOrder] err: {err}".format(err=e))
         return ret
 
     def orderCommon(self, request):
@@ -196,7 +205,7 @@ class TradingAgent(object):
         '''
         左側拐點｜多方平倉｜45m｜$1606.11
         左側拐點｜多方進場｜45m｜$1587.74
-        左側拐點｜多方止損｜45m｜$1517.74
+        左側拐點｜多方停損｜45m｜$1517.74
         '''
         payload = request.get_data().decode('utf-8').split('｜')
 
@@ -207,7 +216,7 @@ class TradingAgent(object):
                      format(accountName=self.accountConfig.get('name'), payload=payload))
 
         ret = {
-            "case" : "左側拐點",
+            "case" : "leftTurn",
             "accountName":self.accountConfig.get('name'),
             "cancelLastOrder":None,
             "closedPosition": None,
@@ -217,18 +226,18 @@ class TradingAgent(object):
         _params = {}
         _params["ordType"] = "market"
         _params["symbol"] = self.accountConfig.get('default_symbol')
-        _params["amount"] = self.accountConfig.get('default_amount')
+        _params["amount"] = float(self.accountConfig.get('default_amount'))
+        _params["price"] = float(payload[3].split('$')[1])
+        _params["side"] = "buy"
 
         if "多方進場" in payload:    
             _params["position"] = "long"
-            _params["side"] = "buy"
-        elif "多方止損" in payload:
+        elif "多方停損" in payload:
             _params["position"] = "flat"
-            _params["side"] = "sell"
         elif "多方平倉" in payload:
             _params["position"] = "flat"
-            _params["side"] = "sell"
-        
+        #logging.info("[orderLeftTurn] _params:{_params}".format(_params=_params))
+
         return self.runOrder(ret, _params)
 
 
@@ -253,28 +262,36 @@ app = Flask(__name__)
 @app.before_request
 def before_req():
     logging.info("request_header:{request_header}".format(request_header = request.headers))
-    logging.info("request_data:{request_data}".format(request_data = request.get_data().decode('utf-8')))
+    payload = None
+    payload_json = None
 
     if request.remote_addr not in config.get("service", "ip_white_list").split(","):
         abort(403)
     
     try:
-        req_json = request.get_json()
+        payload_json = request.get_json()
     except Exception as e:
         logging.info("not a json request")
-        req_json = None
+        payload = request.get_data().decode('utf-8')
 
+    logging.info("request_data:{request_data}".format(request_data = payload))
 
-    if req_json is not None and (
-            "apiSec" not in req_json or req_json["apiSec"] != config.get("service", "api_sec")):
-        abort(401)
-    elif request.get_data() is not None:
+    if payload_json is not None:
+        logging.info("payload is json")
+        if payload_json["apiSec"] != config.get("service", "api_sec"):
+            logging.warn("no apiSec in request")
+            abort(401)
+    elif payload is not None and len(payload) != 0:
+        logging.info("payload is text/plain")
         specific_keys = config.get("service", "specific_keys").split(",")
         for key in specific_keys:
-            if key in request.get_data().decode('utf-8'):
+            if key in payload:
+                logging.info("get specific key:{key} in payload".format(key=key))
                 return
-        abort(400)
+        logging.warn("not specific key:{specific_keys} in payload".format(specific_keys=specific_keys))
+        abort(404)
     else:
+        logging.warn("not a valid request")
         abort(400)
 
 
@@ -329,6 +346,8 @@ if __name__ == '__main__':
                     'name': name
                     , 'apiKey': apiKey
                     , 'secret': secret
+                    , 'default_symbol': config.get(section, 'default_symbol')
+                    , 'default_amount': config.get(section, 'default_amount')
                 }
                 tradingAgent = TradingAgent(config=config, accountConfig=accountConfig)
                 #Initialize Instruments
