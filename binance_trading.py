@@ -12,6 +12,7 @@ import requests
 import os
 import _thread
 import time
+import core.MessageSender as MessageSender
 
 
 # 读取配置文件，优先读取json格式，如果没有就读取ini格式
@@ -299,6 +300,7 @@ def order():
         "msg": ""
     }
     #logging.info("fetch_orders={orderlist}".format(orderlist=exchange.fetch_orders(symbol="ETH-PERP", limit=200)))
+
     # 获取参数 或 填充默认参数
     _params = request.json
     if "apiSec" not in _params or _params["apiSec"] != apiSec:
@@ -368,8 +370,20 @@ def order():
     if _params['position'] is not None:
         lastOrdPosition = _params['position']
     #logging.info("new fetch_orders={orderlist}".format(orderlist=exchange.fetch_orders(symbol="ETH-PERP", limit=200)))
+    msg = "binance_trading.py: {ret}".format(ret=ret)
+    sendMessage(msg)
     return ret
 
+def sendMessage(msg):
+    messageSender = None
+    try:
+        messageSender = MessageSender.MessageSender(configPath='./core/MessageSender.cfg')
+        messageSender.sendMessageToMq(msg)
+    except Exception as e:
+        logging.error("sendMessage err:" + str(e))
+    finally:
+        if messageSender is not None:
+           messageSender.Stop()
 
 if __name__ == '__main__':
     try:
